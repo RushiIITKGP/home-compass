@@ -1,0 +1,19 @@
+# Phase 3 dependencies — the LangGraph agent itself.
+# Also needs mcp-property/requirements.txt and root requirements.txt
+# installed in the same environment for the CLI/API's MCP subprocess
+# spawn — see api/setup.py and README.md.
+
+langgraph>=0.2.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-google-genai>=2.0.0
+langchain-groq>=0.2.0
+langchain-mcp-adapters>=0.1.0
+langgraph-checkpoint-postgres>=2.0.0
+psycopg[binary]>=3.1.18
+python-dotenv>=1.0.1
+pydantic>=2.7
+
+# Phase 4 — the FastAPI gateway
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0

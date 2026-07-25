@@ -1,0 +1,32 @@
+# --- Python ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# --- Node / Next.js ---
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# --- Env & secrets ---
+.env
+*.env.local
+# Google Drive OAuth credentials — never commit
+gdrive-mcp/
+gcp-oauth.keys.json
+.gdrive-server-credentials.json
+
+# --- Docker ---
+pgdata/
+
+# --- Data files (downloaded manually, see ingest-worker/README.md) ---
+ingest-worker/data/*.csv
+
+# --- OS / editor ---
+.DS_Store
+.vscode/
+.idea/

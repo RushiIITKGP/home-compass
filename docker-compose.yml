@@ -1,0 +1,100 @@
+# Home Compass — full stack, one command:  docker compose up
+#
+#   postgres  — database (pgvector)
+#   api       — FastAPI + LangGraph agent (spawns the MCP servers inside
+#               itself; see api/Dockerfile)
+#   web       — Next.js frontend            -> http://localhost:3000
+#   adminer   — browse the DB in a browser  -> http://localhost:8081
+#
+# One-time data setup (after `docker compose up -d postgres`) via the
+# tools profile — see DOCKER.md.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: home-compass-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-homecompass}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-homecompass}
+      POSTGRES_DB: ${POSTGRES_DB:-homecompass}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-homecompass}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    container_name: home-compass-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Inside the Docker network the DB is at the service name, and
+      # Ollama runs on the HOST (host.docker.internal), not in a container.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-homecompass}:${POSTGRES_PASSWORD:-homecompass}@postgres:5432/${POSTGRES_DB:-homecompass}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # lets the container reach the host's Ollama on Linux too
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        # Baked into the frontend at build time; the browser calls the
+        # API at this URL from the user's own machine.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+    container_name: home-compass-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+  adminer:
+    # Browse the DB at http://localhost:8081 — System PostgreSQL,
+    # Server "postgres", user/pass/db "homecompass".
+    image: adminer
+    container_name: home-compass-adminer
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # One-off data jobs — not started by `docker compose up`. Run with:
+  #   docker compose run --rm tools python db/create_tables.py
+  #   docker compose run --rm tools python ingest-worker/seed_kaggle.py --limit 5000
+  # (see DOCKER.md). Uses the API image since it already has all the code.
+  tools:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    env_file: .env
+    working_dir: /app
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-homecompass}:${POSTGRES_PASSWORD:-homecompass}@postgres:5432/${POSTGRES_DB:-homecompass}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["tools"]
+
+volumes:
+  pgdata:

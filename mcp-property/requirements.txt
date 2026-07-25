@@ -1,0 +1,10 @@
+# Shared db-layer deps (mirrors root requirements.txt) plus MCP + local
+# Ollama embeddings — no cloud provider or API key needed for semantic
+# search anymore. Requires a running Ollama with the embedding model
+# pulled: `ollama pull nomic-embed-text`.
+sqlalchemy>=2.0.30
+psycopg[binary]>=3.1.18
+pgvector>=0.3.6
+mcp>=1.2.0
+langchain-ollama>=0.2.0
+python-dotenv>=1.0.1
