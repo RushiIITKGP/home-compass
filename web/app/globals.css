@@ -1,0 +1,105 @@
+@import "tailwindcss";
+
+@theme {
+  /* --- Color: parchment, brass, and moss — a navigator's chart table in
+     daylight rather than by lamplight. Paper is the dominant surface,
+     card white sits just above it for panels, brass marks the agent's
+     confidence and every price, moss marks "ready" states like the
+     gauge arc. --- */
+  --color-paper: #f4f1e9;
+  --color-paper-dim: #e8e2d2;
+  --color-card: #ffffff;
+  --color-card-dim: #faf8f2;
+  --color-ink: #1f2a44;
+  --color-ink-dim: #4b5468;
+  --color-brass: #b8802d;
+  --color-brass-bright: #d1994b;
+  --color-brass-deep: #8a5f2e;
+  --color-moss: #3f6b52;
+  --color-moss-bright: #56816a;
+  --color-rule: rgba(31, 42, 68, 0.12);
+  --color-rule-bright: rgba(31, 42, 68, 0.22);
+  --color-muted: #85806f;
+  --color-danger: #ab4a3c;
+
+  /* Stable across both themes — brass/navy surfaces need light text
+     regardless of light or dark mode, so these don't get overridden
+     below the way paper/card/ink do. */
+  --color-cream: #f4f1e9;
+  --color-user-bg: #1f2a44;
+  --color-user-fg: #f4f1e9;
+
+  /* --- Type: unchanged — Fraunces for the wordmark and section labels,
+     Work Sans for the conversation, Space Mono for coordinates/prices/
+     citations, the numbers a surveyor would log. --- */
+  --font-display: var(--font-fraunces);
+  --font-sans: var(--font-work-sans);
+  --font-mono: var(--font-space-mono);
+}
+
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+/* Dark theme — same token names as the light defaults above, so every
+   component (which only ever references var(--color-x)) recolors
+   automatically with no per-component dark: variants needed. The user
+   bubble becomes a moss accent rather than navy, since navy would
+   nearly vanish against a dark page background. */
+.dark {
+  --color-paper: #161b24;
+  --color-paper-dim: #1c222d;
+  --color-card: #1e2530;
+  --color-card-dim: #262e3b;
+  --color-ink: #f2ede0;
+  --color-ink-dim: #c9c2b0;
+  --color-brass: #c08a3e;
+  --color-brass-bright: #dba455;
+  --color-brass-deep: #a9793a;
+  --color-moss: #5b8a82;
+  --color-moss-bright: #74a89f;
+  --color-rule: rgba(242, 237, 224, 0.12);
+  --color-rule-bright: rgba(242, 237, 224, 0.22);
+  --color-muted: #948d7d;
+  --color-danger: #c07a63;
+  --color-user-bg: #3f6b52;
+  --color-user-fg: #f2ede0;
+}
+
+body {
+  background-color: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
+/* Visible keyboard focus everywhere — quiet, but never absent. */
+:focus-visible {
+  outline: 2px solid var(--color-brass);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Thin, quiet scrollbar for the chat transcript — a ruled margin, not a
+   default OS scrollbar fighting the palette. */
+.transcript::-webkit-scrollbar {
+  width: 8px;
+}
+.transcript::-webkit-scrollbar-track {
+  background: transparent;
+}
+.transcript::-webkit-scrollbar-thumb {
+  background-color: var(--color-rule-bright);
+  border-radius: 999px;
+}
