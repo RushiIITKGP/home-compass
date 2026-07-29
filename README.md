@@ -27,7 +27,6 @@ intake → confidence → (clarify | search) → rank results → write answer �
 - **Embeddings:** local, via Ollama
 - **Guardrail:** RAG over a rules PDF checks every answer
 - **Frontend:** Next.js chat UI with live streaming
-- **Quality:** an offline eval suite (`evals/`) and LangSmith tracing
 
 ## Tech stack
 
@@ -53,20 +52,3 @@ docker compose up --build
 ```
 
 Then open **http://localhost:3000**.
-
-Full details, the non-Docker path, and troubleshooting are in
-[DOCKER.md](./DOCKER.md) and [STARTUP.md](./STARTUP.md).
-
-## Docs
-
-- [DOCKER.md](./DOCKER.md) — running with Docker
-- [CODE_TOUR.md](./CODE_TOUR.md) — read the codebase in order
-- [GRAPH_REFERENCE.md](./GRAPH_REFERENCE.md) — every agent node explained
-- [evals/README.md](./evals/README.md) — the eval suite
-- [compliance/README.md](./compliance/README.md) — the RAG guardrail
-
-## Notes
-
-This is a learning project. Listing data is a sample dataset, and the
-compliance rulebook is a fictional document for testing — see the docs
-for details.
