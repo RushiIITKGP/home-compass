@@ -62,8 +62,7 @@ def ingest(pdf_path: Path) -> int:
         print(f"  no § sections found in {pdf_path.name} — check SECTION_PATTERN")
         return 0
 
-    session = get_session()
-    try:
+    with get_session() as session:
         session.execute(delete(ComplianceRule).where(ComplianceRule.document == pdf_path.name))
         for rule in rules:
             # Embed section + title + body together so a query like
@@ -80,8 +79,6 @@ def ingest(pdf_path: Path) -> int:
                 )
             )
         session.commit()
-    finally:
-        session.close()
     return len(rules)
 
 

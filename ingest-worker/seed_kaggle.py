@@ -29,7 +29,6 @@ from pathlib import Path
 import pandas as pd
 from dotenv import load_dotenv
 from sqlalchemy import insert
-from sqlalchemy.orm import Session
 
 load_dotenv()  # before the db/mcp-property imports below, which read env vars at module-import time
 
@@ -168,17 +167,14 @@ def seed(csv_path: Path, limit: int | None, batch_size: int = 1000) -> int:
     df = load_and_clean(csv_path, limit)
     rows = to_listing_rows(df)
 
-    session: Session = get_session()
     total = 0
-    try:
+    with get_session() as session:
         for i in range(0, len(rows), batch_size):
             batch = rows[i : i + batch_size]
             session.execute(insert(Listing), batch)
             session.commit()
             total += len(batch)
             print(f"  inserted {total}/{len(rows)}")
-    finally:
-        session.close()
 
     return total
 

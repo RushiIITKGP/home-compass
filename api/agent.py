@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Annotated, Optional, Union
+from typing import Annotated, Literal, Optional, Union
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.config import get_stream_writer
@@ -94,10 +94,7 @@ def _llm_safe(message: BaseMessage) -> BaseMessage:
         text = "[]"
     if text == content:
         return message
-    return ToolMessage(
-        content=text, tool_call_id=message.tool_call_id,
-        name=getattr(message, "name", None), id=message.id,
-    )
+    return message.model_copy(update={"content": text})
 
 
 def _recent_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
@@ -155,9 +152,9 @@ def _coerce_number(value) -> Optional[float]:
         return None
     multiplier = 1.0
     if s.endswith("k"):
-        multiplier, s = 1_000.0, s[:-1]
+        multiplier, s = 1_000.0, s.removesuffix("k")
     elif s.endswith("m"):
-        multiplier, s = 1_000_000.0, s[:-1]
+        multiplier, s = 1_000_000.0, s.removesuffix("m")
     try:
         return float(s) * multiplier
     except ValueError:
@@ -201,9 +198,7 @@ class ExtractedSlots(BaseModel):
 def merge_slots(existing: UserSlots, extracted: ExtractedSlots) -> UserSlots:
     """New values overwrite; must_haves accumulate uniquely across turns."""
     merged: UserSlots = dict(existing)  # type: ignore[assignment]
-    for key, value in extracted.model_dump().items():
-        if value is None:
-            continue
+    for key, value in extracted.model_dump(exclude_none=True).items():
         if key == "must_haves":
             current = merged.get("must_haves") or []
             merged["must_haves"] = list(dict.fromkeys([*current, *value]))
@@ -248,7 +243,9 @@ RETRIEVE_SYSTEM_PROMPT = (
     "listing or area already discussed — its crime rate, demographics, or "
     "market trends — call get_neighborhood_demographics, get_safety_stats, "
     "or get_market_trends directly with that ZIP code rather than "
-    "searching again."
+    "searching again. get_market_trends automatically falls back to a live "
+    "Redfin web search when it has no stored data, and those results are "
+    "web estimates — cite the source URL and don't present them as verified."
 )
 
 PRESENT_SYSTEM_PROMPT = (
@@ -269,7 +266,11 @@ PRESENT_SYSTEM_PROMPT = (
     "follow-up question, answer that question directly and concisely "
     "rather than re-presenting everything. Don't invent details not "
     "present in the data, and don't present enrichment data that has an "
-    "'error' field as if it were real."
+    "'error' field as if it were real. "
+    "When the data is web-sourced (it has an 'evidence' list with 'url' "
+    "fields — e.g. live market data), you MUST include the actual source "
+    "URL(s) in your answer next to the figures, and call them estimates. "
+    "Never give a web-sourced number without its URL."
 )
 
 
@@ -298,7 +299,7 @@ def confidence_node(state: AgentState) -> dict:
     return {"confidence_score": score, "missing_slot": missing}
 
 
-def gate(state: AgentState) -> str:
+def gate(state: AgentState) -> Literal["retrieve", "clarify"]:
     return "retrieve" if state["confidence_score"] >= CONFIDENCE_THRESHOLD else "clarify"
 
 
@@ -317,7 +318,7 @@ def make_clarify_node(llm):
         missing_slot = state.get("missing_slot")
         prompt_text = CLARIFY_SYSTEM_PROMPT.format(missing_slot=missing_slot or "their needs")
         response = llm.invoke([SystemMessage(content=prompt_text), *_recent_messages(state["messages"])])
-        if not extract_text_content(response.content).strip():
+        if not response.text.strip():
             response = AIMessage(content=CLARIFY_FALLBACK_QUESTIONS.get(
                 missing_slot, "Could you tell me a bit more about what you're looking for?"
             ))
@@ -331,6 +332,7 @@ TOOL_STATUS_MESSAGES = {
     "get_neighborhood_demographics": "Looking up neighborhood demographics...",
     "get_safety_stats": "Checking crime stats...",
     "get_market_trends": "Checking market trends...",
+    "get_market_trends_live": "Searching the web for current market data...",
 }
 
 
@@ -346,22 +348,6 @@ def make_retrieve_node(llm_with_tools):
         return {"messages": [response]}
 
     return retrieve_node
-
-
-def extract_text_content(content) -> str:
-    """AIMessage content can be a string or a list of content blocks
-    (some with non-text reasoning) — always return just the words."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
-                parts.append(item["text"])
-        return "".join(parts)
-    return ""
 
 
 def _fallback_summary(recommendations: list[dict]) -> str:
@@ -381,7 +367,7 @@ def _fallback_summary(recommendations: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def route_after_retrieve(state: AgentState) -> str:
+def route_after_retrieve(state: AgentState) -> Literal["tools", "end_turn"]:
     """Tool calls -> execute them; a direct text reply IS the turn's
     answer -> send it down the guarded answer path."""
     last = state["messages"][-1]
@@ -390,7 +376,7 @@ def route_after_retrieve(state: AgentState) -> str:
     return "end_turn"
 
 
-def route_after_tools(state: AgentState) -> str:
+def route_after_tools(state: AgentState) -> Literal["synthesis", "present"]:
     """Fresh search -> synthesis (format cards). Enrichment-only ->
     present (the ToolMessage is already in the conversation)."""
     for message in reversed(state["messages"]):
@@ -513,14 +499,56 @@ def synthesis_node(state: AgentState) -> dict:
     return {"recommendations": recommendations}
 
 
+def _trim_enrichment_dates(data):
+    """Shorten a 'fetched_at' ISO timestamp to just its date. Everything
+    else in an enrichment sub-dict — source, note, error, evidence/url —
+    passes through untouched: present_node's prompt is required to relay
+    error fields honestly and to cite web-search URLs verbatim, so those
+    can't be trimmed away, only the timestamp precision nobody reads."""
+    if not isinstance(data, dict) or "fetched_at" not in data:
+        return data
+    trimmed = dict(data)
+    fetched_at = trimmed.get("fetched_at")
+    if isinstance(fetched_at, str) and "T" in fetched_at:
+        trimmed["fetched_at"] = fetched_at.split("T")[0]
+    return trimmed
+
+
+def _present_view(recommendations: list[dict]) -> list[dict]:
+    """Slims each recommendation to what present_node's prompt actually
+    needs to write about — the full listing record, fit_components
+    breakdown, and recommendation_confidence still reach the frontend via
+    state["recommendations"] unchanged (ListingCard/FitBreakdown render
+    from that, not from this); this trims only the copy serialized into
+    the LLM prompt itself, since that's what's billed as input tokens on
+    every present_node call."""
+    view = []
+    for rec in recommendations:
+        listing = rec.get("listing", {})
+        item = {
+            "address": listing.get("address"),
+            "price": listing.get("price"),
+            "beds": listing.get("beds"),
+            "baths": listing.get("baths"),
+            "sqft": listing.get("sqft"),
+            "status": listing.get("status"),
+            "fit_score": rec.get("fit_score"),
+        }
+        enrichment = rec.get("enrichment") or {}
+        if enrichment:
+            item["enrichment"] = {k: _trim_enrichment_dates(v) for k, v in enrichment.items()}
+        view.append(item)
+    return view
+
+
 def make_present_node(llm):
     def present_node(state: AgentState) -> dict:
         _status("Writing response...")
         prompt_text = PRESENT_SYSTEM_PROMPT.format(
-            slots=state.get("slots", {}), recommendations=state.get("recommendations", [])
+            slots=state.get("slots", {}), recommendations=_present_view(state.get("recommendations", []))
         )
         response = llm.invoke([SystemMessage(content=prompt_text), *_recent_messages(state["messages"])])
-        if not extract_text_content(response.content).strip():
+        if not response.text.strip():
             response = AIMessage(content=_fallback_summary(state.get("recommendations", [])))
         return {"messages": [response]}
 
@@ -562,11 +590,11 @@ def make_compliance_node(llm, rule_retriever):
     def compliance_node(state: AgentState) -> dict:
         _status("Checking compliance rules...")
         last = state["messages"][-1]
-        draft = extract_text_content(last.content)
+        draft = last.text
         if not draft.strip():
             return {}
         user_text = next(
-            (extract_text_content(m.content) for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
+            (m.text for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
             "",
         )
         try:
@@ -673,14 +701,14 @@ def make_score_node(llm, guarded: bool):
 
     def score_node(state: AgentState) -> dict:
         _status("Scoring answer confidence...")
-        answer = extract_text_content(state["messages"][-1].content)
+        answer = state["messages"][-1].text
         if not answer.strip():
             return {}
 
         turn = _turn_messages(state["messages"])
-        question = extract_text_content(turn[0].content) if turn else ""
+        question = turn[0].text if turn else ""
         tool_texts = [
-            extract_text_content(m.content) if isinstance(m.content, str) else str(m.content)
+            m.content if isinstance(m.content, str) else str(m.content)
             for m in turn if isinstance(m, ToolMessage)
         ]
 
@@ -732,21 +760,30 @@ def make_score_node(llm, guarded: bool):
 # --------------------------------------------------------------- build --
 
 
-def build_graph(llm, tools: list, checkpointer=None, rule_retriever=None):
+def build_graph(fast_llm, smart_llm, tools: list, checkpointer=None, rule_retriever=None):
+    # Task-based model routing (see api/llm.py): fast_llm handles cheap,
+    # simple nodes (intake extraction, the clarify question); smart_llm
+    # handles anywhere a wrong call is expensive — tool routing in
+    # retrieve, the final answer, the compliance verdict, the scoring
+    # judge.
+    #
     # Only these four are callable by the LLM; get_listing_details is
     # deliberately unbound.
-    directly_callable = {"search_listings", "get_neighborhood_demographics", "get_safety_stats", "get_market_trends"}
+    directly_callable = {
+        "search_listings", "get_neighborhood_demographics", "get_safety_stats",
+        "get_market_trends", "get_market_trends_live",
+    }
     retrieval_tools = [t for t in tools if t.name in directly_callable]
-    llm_with_tools = llm.bind_tools(retrieval_tools)
+    llm_with_tools = smart_llm.bind_tools(retrieval_tools)
 
     graph = StateGraph(AgentState)
-    graph.add_node("intake", make_intake_node(llm))
+    graph.add_node("intake", make_intake_node(fast_llm))
     graph.add_node("confidence", confidence_node)
-    graph.add_node("clarify", make_clarify_node(llm))
+    graph.add_node("clarify", make_clarify_node(fast_llm))
     graph.add_node("retrieve", make_retrieve_node(llm_with_tools))
     graph.add_node("tools", ToolNode(retrieval_tools))
     graph.add_node("synthesis", synthesis_node)
-    graph.add_node("present", make_present_node(llm))
+    graph.add_node("present", make_present_node(smart_llm))
 
     # Answer path: present (or retrieve's direct reply) -> compliance
     # (when rules ingested) -> score (unless disabled) -> END. clarify
@@ -754,18 +791,18 @@ def build_graph(llm, tools: list, checkpointer=None, rule_retriever=None):
     guarded = rule_retriever is not None
     scoring = os.environ.get("ANSWER_SCORING", "true").lower() == "true"
     if guarded:
-        graph.add_node("compliance", make_compliance_node(llm, rule_retriever))
+        graph.add_node("compliance", make_compliance_node(smart_llm, rule_retriever))
     if scoring:
-        graph.add_node("score", make_score_node(llm, guarded))
+        graph.add_node("score", make_score_node(smart_llm, guarded))
     after_score = "score" if scoring else END
     answer_end = "compliance" if guarded else after_score
 
     graph.add_edge(START, "intake")
     graph.add_edge("intake", "confidence")
-    graph.add_conditional_edges("confidence", gate, {"clarify": "clarify", "retrieve": "retrieve"})
+    graph.add_conditional_edges("confidence", gate)
     graph.add_edge("clarify", END)
     graph.add_conditional_edges("retrieve", route_after_retrieve, {"tools": "tools", "end_turn": answer_end})
-    graph.add_conditional_edges("tools", route_after_tools, {"synthesis": "synthesis", "present": "present"})
+    graph.add_conditional_edges("tools", route_after_tools)
     graph.add_edge("synthesis", "present")
     graph.add_edge("present", answer_end)
     if guarded:

@@ -7,9 +7,12 @@ annually). Run standalone: python mcp-enrich/server.py
 from __future__ import annotations
 
 import os
+import re
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote, urlencode
 
 import requests
 from dotenv import load_dotenv
@@ -49,10 +52,14 @@ CENSUS_VARIABLES = {
 
 def _fetch_census(zip_code: str) -> dict:
     variables = ",".join(["NAME", *CENSUS_VARIABLES.keys()])
-    url = (
-        f"https://api.census.gov/data/{CENSUS_ACS_YEAR}/acs/acs5"
-        f"?get={variables}&for=zip%20code%20tabulation%20area:{zip_code}&key={CENSUS_API_KEY}"
+    # zip_code is an LLM tool-call argument — build the query string with
+    # urlencode rather than splicing it into the URL unescaped.
+    params = urlencode(
+        {"get": variables, "for": f"zip code tabulation area:{zip_code}", "key": CENSUS_API_KEY},
+        quote_via=quote,
+        safe=",:",
     )
+    url = f"https://api.census.gov/data/{CENSUS_ACS_YEAR}/acs/acs5?{params}"
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
@@ -93,8 +100,7 @@ def get_neighborhood_demographics(zip_code: str) -> dict:
     Census Bureau's ACS 5-Year estimates. Cached in Postgres after the
     first fetch — this data only updates annually.
     """
-    session = get_session()
-    try:
+    with get_session() as session:
         neighborhood = get_or_create_neighborhood(session, zip_code)
 
         cached = (
@@ -128,11 +134,12 @@ def get_neighborhood_demographics(zip_code: str) -> dict:
         session.commit()
         session.refresh(record)
         return _demographics_to_dict(record)
-    finally:
-        session.close()
 
 
 # --------------------------------------------------------------- crime --
+
+
+_YEAR_KEY_RE = re.compile(r"^(\d{4}|\d{2}-\d{4})$")
 
 
 def _find_time_series(payload, depth: int = 0) -> dict | None:
@@ -140,12 +147,9 @@ def _find_time_series(payload, depth: int = 0) -> dict | None:
     to numbers — survives the CDE API's shifting response nestings."""
     if depth > 5 or not isinstance(payload, dict):
         return None
-    import re
-
-    key_pattern = re.compile(r"^(\d{4}|\d{2}-\d{4})$")
     numeric_items = {
         k: v for k, v in payload.items()
-        if isinstance(k, str) and key_pattern.match(k) and isinstance(v, (int, float))
+        if isinstance(k, str) and _YEAR_KEY_RE.match(k) and isinstance(v, (int, float))
     }
     if numeric_items:
         return numeric_items
@@ -159,15 +163,15 @@ def _find_time_series(payload, depth: int = 0) -> dict | None:
 def _latest_annual_value(series: dict) -> tuple[int, float]:
     """Annual keys -> that year's value; monthly keys -> summed per year,
     preferring the latest COMPLETE year (a partial year would understate)."""
-    annual: dict[int, float] = {}
-    month_counts: dict[int, int] = {}
+    annual: Counter = Counter()
+    month_counts: Counter = Counter()
     monthly = False
     for key, value in series.items():
         if "-" in key:
             monthly = True
             year = int(key.split("-")[1])
-            annual[year] = annual.get(year, 0) + value
-            month_counts[year] = month_counts.get(year, 0) + 1
+            annual[year] += value
+            month_counts[year] += 1
         else:
             annual[int(key)] = value
     if monthly:
@@ -187,14 +191,18 @@ def _fetch_fbi_offense_count(state: str, offense: str, from_year: int, to_year: 
     'actuals' (counts) and 'rates' (per 100k) series — units differing
     ~700x — so prefer actuals and label rates explicitly; prefer the
     state's series over the 'United States' comparison series."""
+    # state is an LLM tool-call argument — quote it into the path rather
+    # than splicing it in unescaped.
+    state_path = quote(state, safe="")
     candidates = [
-        f"{FBI_CDE_BASE}/summarized/state/{state}/{offense}?from=01-{from_year}&to=12-{to_year}&API_KEY={FBI_API_KEY}",
-        f"{FBI_CDE_BASE}/estimate/state/{state}/{offense}?from=01-{from_year}&to=12-{to_year}&API_KEY={FBI_API_KEY}",
+        f"{FBI_CDE_BASE}/summarized/state/{state_path}/{offense}",
+        f"{FBI_CDE_BASE}/estimate/state/{state_path}/{offense}",
     ]
+    params = {"from": f"01-{from_year}", "to": f"12-{to_year}", "API_KEY": FBI_API_KEY}
     last_error = None
     for url in candidates:
         try:
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, params=params, timeout=10)
             response.raise_for_status()
             payload = response.json()
         except (requests.RequestException, ValueError) as exc:
@@ -293,8 +301,7 @@ def get_safety_stats(zip_code: str, state: str) -> dict:
     Note: true ZIP/neighborhood-level crime data isn't available for
     free — see the `note` field in the result.
     """
-    session = get_session()
-    try:
+    with get_session() as session:
         neighborhood = get_or_create_neighborhood(session, zip_code)
 
         cached = (
@@ -340,8 +347,6 @@ def get_safety_stats(zip_code: str, state: str) -> dict:
         session.commit()
         session.refresh(record)
         return _crime_stat_to_dict(record)
-    finally:
-        session.close()
 
 
 if __name__ == "__main__":

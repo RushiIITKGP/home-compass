@@ -27,11 +27,8 @@ def build_rule_retriever(k: int = 4) -> Optional[RuleRetriever]:
     """Returns a query -> top-k rules function, or None if no rules are
     ingested (run compliance/ingest_rules.py) or the DB is unreachable."""
     try:
-        session = get_session()
-        try:
+        with get_session() as session:
             count = session.execute(select(func.count()).select_from(ComplianceRule)).scalar()
-        finally:
-            session.close()
     except Exception:
         return None
     if not count:
@@ -41,8 +38,7 @@ def build_rule_retriever(k: int = 4) -> Optional[RuleRetriever]:
 
     def retrieve(query: str) -> list[dict]:
         vector = embed_query(query)
-        session = get_session()
-        try:
+        with get_session() as session:
             stmt = (
                 select(ComplianceRule)
                 .order_by(ComplianceRule.embedding.cosine_distance(vector))
@@ -50,7 +46,5 @@ def build_rule_retriever(k: int = 4) -> Optional[RuleRetriever]:
             )
             rows = session.execute(stmt).scalars().all()
             return [{"section": r.section, "title": r.title, "text": r.text} for r in rows]
-        finally:
-            session.close()
 
     return retrieve

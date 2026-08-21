@@ -109,28 +109,22 @@ def search_listings(
     embeddings (A-03's hybrid retrieval pattern) — omit it for pure
     structured search.
     """
-    session = get_session()
-    try:
+    with get_session() as session:
         stmt = _build_search_query(min_price, max_price, beds, baths, city, state, query, limit)
         results = session.execute(stmt).scalars().all()
         return [_listing_to_dict(listing) for listing in results]
-    finally:
-        session.close()
 
 
 @mcp.tool()
 def get_listing_details(listing_id: str) -> dict:
     """Fetch full details for a single listing by ID, including its raw source attributes."""
-    session = get_session()
-    try:
+    with get_session() as session:
         listing = session.get(Listing, listing_id)
         if listing is None:
             return {"error": f"No listing found with id {listing_id}"}
         data = _listing_to_dict(listing)
         data["raw_attributes"] = listing.raw_attributes
         return data
-    finally:
-        session.close()
 
 
 if __name__ == "__main__":

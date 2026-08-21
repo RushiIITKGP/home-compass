@@ -26,6 +26,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))  # repo root, for the 
 sys.path.append(str(Path(__file__).resolve().parent))  # this dir, for local embeddings.py
 
 from sqlalchemy import select  # noqa: E402
+from tqdm import tqdm  # noqa: E402
 
 from db.models import Listing, ListingEmbedding  # noqa: E402
 from db.session import get_session  # noqa: E402
@@ -59,15 +60,14 @@ def describe_listing(listing: Listing) -> str:
 
 
 def backfill(limit: int | None, batch_size: int = 50) -> int:
-    session = get_session()
-    try:
+    with get_session() as session:
         already_embedded = {row[0] for row in session.execute(select(ListingEmbedding.listing_id))}
 
         stmt = select(Listing)
         listings = session.execute(stmt).scalars().all()
 
         count = 0
-        for listing in listings:
+        for listing in tqdm(listings, desc="Embedding listings", unit="listing"):
             if listing.id in already_embedded:
                 continue
 
@@ -78,15 +78,12 @@ def backfill(limit: int | None, batch_size: int = 50) -> int:
 
             if count % batch_size == 0:
                 session.commit()
-                print(f"  embedded {count}...")
 
             if limit and count >= limit:
                 break
 
         session.commit()
         return count
-    finally:
-        session.close()
 
 
 def main() -> None:

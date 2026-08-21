@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChatInput } from "@/components/ChatInput";
 import { ChatMessage } from "@/components/ChatMessage";
 import { CompassGauge } from "@/components/CompassGauge";
+import { FitBreakdown } from "@/components/FitBreakdown";
 import { ListingCard } from "@/components/ListingCard";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { streamChat } from "@/lib/streamChat";
@@ -186,6 +187,9 @@ export default function Home() {
                   {latestRecommendations.map((rec) => (
                     <ListingCard key={rec.listing.id} recommendation={rec} />
                   ))}
+                </div>
+                <div className="mt-3">
+                  <FitBreakdown recommendations={latestRecommendations} />
                 </div>
               </>
             ) : (

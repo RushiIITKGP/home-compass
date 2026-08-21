@@ -29,12 +29,11 @@ if os.environ.get("LANGCHAIN_TRACING_V2", "").lower() == "true" and not (
 
 from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
-from fastapi.responses import StreamingResponse  # noqa: E402
 from langchain_core.messages import HumanMessage  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
+from sse_starlette.sse import EventSourceResponse  # noqa: E402
 
 from setup import agent_graph  # noqa: E402
-from agent import extract_text_content  # noqa: E402
 
 # Only stream tokens from user-facing nodes — the others would leak
 # structured-output JSON or tool-call internals.
@@ -63,10 +62,6 @@ class ChatRequest(BaseModel):
     thread_id: Optional[str] = None
 
 
-def _sse(data: dict) -> str:
-    return f"data: {json.dumps(data)}\n\n"
-
-
 async def stream_chat(app: FastAPI, message: str, thread_id: str):
     graph = app.state.graph
     config = {
@@ -75,7 +70,7 @@ async def stream_chat(app: FastAPI, message: str, thread_id: str):
         "metadata": {"thread_id": thread_id},  # groups LangSmith's Threads view
     }
 
-    yield _sse({"thread_id": thread_id})
+    yield json.dumps({"thread_id": thread_id})
 
     streamed_text = ""
     async for mode, chunk in graph.astream(
@@ -86,28 +81,28 @@ async def stream_chat(app: FastAPI, message: str, thread_id: str):
         if mode == "custom":
             status = chunk.get("status") if isinstance(chunk, dict) else None
             if status:
-                yield _sse({"status": status})
+                yield json.dumps({"status": status})
         elif mode == "messages":
             message_chunk, metadata = chunk
             if metadata.get("langgraph_node") in STREAMABLE_NODES:
-                text = extract_text_content(message_chunk.content)
+                text = message_chunk.text
                 if text:
                     streamed_text += text
-                    yield _sse({"token": text})
+                    yield json.dumps({"token": text})
 
     final_state = await graph.aget_state(config)
     values = final_state.values
     final_messages = values.get("messages", [])
-    final_text = extract_text_content(final_messages[-1].content) if final_messages else ""
+    final_text = final_messages[-1].text if final_messages else ""
 
     if not streamed_text and final_text:
         # Fallback answers never streamed — send once so the bubble isn't empty.
-        yield _sse({"token": final_text})
+        yield json.dumps({"token": final_text})
     elif final_text and final_text != streamed_text:
         # Compliance revised the draft after it streamed — swap the bubble.
-        yield _sse({"replace": final_text})
+        yield json.dumps({"replace": final_text})
 
-    yield _sse({
+    yield json.dumps({
         "done": True,
         "confidence_score": values.get("confidence_score", 0.0),
         "missing_slot": values.get("missing_slot"),
@@ -119,10 +114,9 @@ async def stream_chat(app: FastAPI, message: str, thread_id: str):
 @app.post("/chat")
 async def chat(request: ChatRequest):
     thread_id = request.thread_id or str(uuid.uuid4())
-    return StreamingResponse(
-        stream_chat(app, request.message, thread_id),
-        media_type="text/event-stream",
-    )
+    # sep="\n" (not sse-starlette's CRLF default) to match the frontend's
+    # hand-parsed "data: {...}\n\n" SSE wire format in web/lib/streamChat.ts.
+    return EventSourceResponse(stream_chat(app, request.message, thread_id), sep="\n")
 
 
 @app.get("/health")

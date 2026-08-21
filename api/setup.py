@@ -51,7 +51,12 @@ async def agent_graph():
     mcp_client = MultiServerMCPClient(servers)
     tools = await mcp_client.get_tools()
 
-    llm = build_chat_model(temperature=0.2)
+    # Task-based routing (api/llm.py): fast_llm for cheap/simple nodes,
+    # smart_llm anywhere a wrong call is expensive. See CHAT_MODEL_FAST /
+    # CHAT_MODEL_SMART in .env.example.
+    fast_llm = build_chat_model(role="fast", temperature=0.2)
+    smart_llm = build_chat_model(role="smart", temperature=0.2)
+    print(f"[llm] fast={type(fast_llm).__name__} smart={type(smart_llm).__name__}")
 
     # Guardrail is on only when rules are ingested — and always says which.
     rule_retriever = build_rule_retriever()
@@ -65,4 +70,4 @@ async def agent_graph():
 
     async with AsyncPostgresSaver.from_conn_string(CHECKPOINTER_DSN) as checkpointer:
         await checkpointer.setup()  # idempotent
-        yield build_graph(llm, tools, checkpointer=checkpointer, rule_retriever=rule_retriever)
+        yield build_graph(fast_llm, smart_llm, tools, checkpointer=checkpointer, rule_retriever=rule_retriever)

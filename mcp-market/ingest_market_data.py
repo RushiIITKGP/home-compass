@@ -29,11 +29,12 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 from dotenv import load_dotenv
-from sqlalchemy.orm import Session
+from tqdm import tqdm
 
 load_dotenv()  # before the db imports below, which read env vars at module-import time
 
@@ -93,8 +94,10 @@ def parse_realtor(path: Path, limit: int | None) -> list[dict]:
 
     rows = []
     for r in df.to_dict(orient="records"):
-        month = str(r.get("month_date_yyyymm", ""))
-        period = f"{month[:4]}-{month[4:6]}-01" if len(month) == 6 else None
+        try:
+            period = datetime.strptime(str(r.get("month_date_yyyymm", "")), "%Y%m").date().isoformat()
+        except ValueError:
+            period = None
 
         rows.append(
             {
@@ -123,10 +126,9 @@ PARSERS = {"redfin": parse_redfin, "realtor": parse_realtor}
 
 
 def load(rows: list[dict], source: str) -> int:
-    session: Session = get_session()
     total = 0
-    try:
-        for row in rows:
+    with get_session() as session:
+        for row in tqdm(rows, desc=f"Loading {source} market stats", unit="row"):
             neighborhood = get_or_create_neighborhood(session, row["zip_code"])
             session.add(
                 MarketStat(
@@ -142,10 +144,7 @@ def load(rows: list[dict], source: str) -> int:
             total += 1
             if total % 200 == 0:
                 session.commit()
-                print(f"  inserted {total}...")
         session.commit()
-    finally:
-        session.close()
     return total
 
 

@@ -1,8 +1,6 @@
 import type { ChatMessage as ChatMessageType } from "@/lib/types";
 import { AnswerConfidencePanel } from "./AnswerConfidencePanel";
 import { CompassGauge } from "./CompassGauge";
-import { FitBreakdown } from "./FitBreakdown";
-import { ListingCard } from "./ListingCard";
 import { StatusLog } from "./StatusLog";
 
 interface ChatMessageProps {
@@ -44,18 +42,8 @@ export function ChatMessage({ message }: ChatMessageProps) {
         </div>
       )}
 
-      {!isUser && message.recommendations && message.recommendations.length > 0 && (
-        <>
-          <div className="ml-0 sm:ml-4 grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
-            {message.recommendations.map((rec) => (
-              <ListingCard key={rec.listing.id} recommendation={rec} />
-            ))}
-          </div>
-          <div className="ml-0 sm:ml-4 w-full">
-            <FitBreakdown recommendations={message.recommendations} />
-          </div>
-        </>
-      )}
+      {/* Listings are shown in the side "Your matches" panel, not inline
+          in the chat — the chat just carries the conversation. */}
 
       {!isUser && message.answerConfidence && (
         <div className="ml-0 sm:ml-4 w-full">

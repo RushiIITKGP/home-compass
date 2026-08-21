@@ -12,20 +12,17 @@ compliance/ingest_rules.py.
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 
 from langchain_ollama import OllamaEmbeddings
 
 OLLAMA_EMBEDDING_MODEL = os.environ.get("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 
-_embedder: OllamaEmbeddings | None = None
 
-
+@lru_cache(maxsize=1)
 def _get_embedder() -> OllamaEmbeddings:
-    global _embedder
-    if _embedder is None:
-        _embedder = OllamaEmbeddings(model=OLLAMA_EMBEDDING_MODEL, base_url=OLLAMA_BASE_URL)
-    return _embedder
+    return OllamaEmbeddings(model=OLLAMA_EMBEDDING_MODEL, base_url=OLLAMA_BASE_URL)
 
 
 def embed_document(text: str) -> list[float]:
