@@ -203,8 +203,6 @@ Exit code is `0` only if every case passes.
 
 | Doc | What's in it |
 |---|---|
-| [`CODE_TOUR.md`](./CODE_TOUR.md) | A guided, in-order walk through the entire codebase |
-| [`GRAPH_REFERENCE.md`](./GRAPH_REFERENCE.md) | Every agent node explained in full detail |
 | [`DOCKER.md`](./DOCKER.md) | The full Docker setup, ports, and troubleshooting |
 | [`evals/README.md`](./evals/README.md) | How the eval suite works and how to grow it |
 | [`compliance/README.md`](./compliance/README.md) | The RAG guardrail, in depth, plus prompts to try and break it |
